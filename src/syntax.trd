@@ -1,0 +1,311 @@
+def Var str;
+def Check item item;
+def Assign item item;
+def Define item;
+def Chem list;
+def Tuple list;
+def Labled str item;
+def Atom str;
+def Operation item str item;
+def Literal str;
+def Block list;
+
+stat white_m /[\s\n\r]*/;
+stat horw_m /[^\S\n]*/;
+stat blank_m /[\s\n\r]+/;
+stat ident_m /[A-Za-z_]\w*/;
+
+stat ws_can_continue {
+    horw_m;
+    option {
+        or line_comment expr_comment;
+        horw_m;
+    };
+    option {
+        "\\";
+        horw_m;
+        option {
+            or line_comment expr_comment;
+            horw_m;
+        };
+        "\n";
+        ws_will_continue;
+    };
+};
+
+stat ws_will_continue {
+    white_m;
+    option {
+        or line_comment expr_comment;
+        white_m;
+    };
+};
+stat blank_will_continue blank_m;
+
+stat tyname_ref {        
+    capture ident;
+
+    option { "::"; white_m; };
+    many ident_m {
+        ws_can_continue;
+        "::";
+        ws_will_continue;
+    };
+
+    export Atom(ident);
+};
+
+stat tyname_tuple {        
+    "(";
+    ws_will_continue;
+
+    into mems;
+    some 
+        tyname
+        ws_will_continue
+        ","
+        ws_will_continue;
+
+    ")";
+
+    export Tuple(mems);
+};
+
+stat tyname_atom {
+    into export;
+    or tyname_tuple tyname_ref;
+};
+
+stat tyname_chem {
+    into chem;
+    many 
+        tyname_atom
+        ws_can_continue
+        "|"
+        ws_will_continue;
+
+    export Chem(chem);
+};
+
+stat tyname tyname_chem;
+
+stat stmt_assign {
+    capture left;
+    ident_m;
+    stop left;
+
+    ws_can_continue;
+    "=";
+    ws_will_continue;
+
+    into_once right;
+    r_value;
+
+    export Assign(Var(left) right);
+};
+
+stat ty_check {
+    into_once left;
+    tyname_atom;
+    stop left;
+
+    ws_can_continue;
+    ":";
+    ws_will_continue;
+
+    into_once right;
+    tyname;
+
+    export Check(left right);
+};
+
+stat ty_assign {
+    into_once left;
+    tyname_atom;
+    stop left;
+
+    ws_can_continue;
+    "=";
+    ws_will_continue;
+
+    into_once right;
+    tyname;
+
+    export Assign(left right);
+};
+
+stat stmt_define {
+    "def";
+    blank_will_continue;
+    
+    into_once def;
+    or ty_assign ty_check; // TODO: Define var types
+
+    export Define(def);
+};
+
+stat expr_literal {
+    capture lit;
+    or /\d+/;
+    export Literal(lit);
+};
+
+stat expr_var_ref {
+    capture name;
+    ident_m;
+    export Var(name);
+};
+
+stat expr_tuple {
+    "(";
+    ws_will_continue;
+
+    into mems;
+    some 
+        r_value
+        ws_will_continue
+        ","
+        ws_will_continue;
+
+    ")";
+
+    export Tuple(mems);
+};
+
+stat expr_paren {
+    "(";
+    ws_will_continue;
+
+    into export;
+    r_value;
+
+    ws_will_continue;
+    ")";
+};
+
+stat expr_block {
+    "{";
+
+    into lines;
+    many 
+        ws_will_continue
+        expr_stmt
+        stmt_end;
+
+    ws_will_continue;
+    "}";
+
+    export Block(lines);
+};
+
+stat expr_4 {
+    into export;
+    or expr_block expr_paren expr_tuple expr_var_ref expr_literal;
+};
+
+stat expr_3 {
+    into export;
+    expr_4;
+    outer {
+        ws_can_continue;
+        ":";
+        ws_will_continue;
+
+        into_once right;
+        tyname;
+
+        export Check(inner right);
+    };
+};
+
+stat expr_2 {
+    into export;
+    or {
+        capture op;
+        or "!" "-" "*" "&";
+        stop op;
+
+        ws_will_continue;
+
+        into_once right;
+        expr_2;
+        stop right;
+
+        into_once none;
+        export Operation(none op right);
+    } expr_3;
+};
+
+stat expr_1 {
+    into export;
+    expr_2;
+    nested {
+        ws_can_continue;
+
+        capture op;
+        or "*" "/" "%";
+        stop op;
+
+        ws_will_continue;
+
+        into_once right;
+        expr_2;
+        stop right;
+
+        export Operation(inner op right);
+    };
+};
+
+stat expr_0 {
+    into export;
+    expr_1;
+    nested {
+        ws_can_continue;
+
+        capture op;
+        or "+" "-";
+        stop op;
+
+        ws_will_continue;
+
+        into_once right;
+        expr_1;
+        stop right;
+
+        export Operation(inner op right);
+    };
+};
+
+stat r_value expr_0;
+
+stat line_comment {
+    "//";
+    /[^\n]*/;
+};
+
+stat expr_comment {
+    "/*";
+    many {
+        not "*/";
+        /.|\s/;
+    };
+    "*/";
+};
+
+stat expr_stmt {
+    into export;
+    or stmt_define stmt_assign r_value line_comment expr_comment;
+};
+
+stat stmt_end {
+    some {
+        horw_m;
+        "\n";
+    };
+};
+
+into export;
+all 
+    ws_will_continue
+    expr_stmt
+    stmt_end;

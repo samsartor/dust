@@ -1,0 +1,12 @@
+[package]
+name = "dustc"
+version = "0.0.0"
+authors = ["Sam Sartor <me@samsartor.com>"]
+build = "build.rs"
+
+[dependencies]
+# tredlib = { path = "/home/sam/Code/tred/tredlib" }
+# lazy_static = "0.2.2"
+
+[build-dependencies]
+peg = "^0.5.4"
