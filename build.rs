@@ -1,5 +1,5 @@
 extern crate peg;
 
 fn main() {
-    peg::cargo_build("src/syntax.peg");
+    peg::cargo_build("src/parse.peg");
 }

@@ -6,7 +6,7 @@ build = "build.rs"
 
 [dependencies]
 # tredlib = { path = "/home/sam/Code/tred/tredlib" }
-# lazy_static = "0.2.2"
+lazy_static = "^1.0.0"
 
 [build-dependencies]
 peg = "^0.5.4"

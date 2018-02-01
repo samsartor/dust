@@ -1,0 +1,162 @@
+use span::{Span};
+use syntax::*;
+
+#![arguments(file_span: Span)]
+
+// Span and symbol building
+sn<node> = a:#position val:node b:#position { 
+	Sn { node: val, span: file_span.within(a, b) }
+}
+sym<node> = val:$(node) { Sy::new(val) }
+box<node> = val:node { Box::new(val) }
+mark -> Span = s:sn<""> { s.span }
+
+// Whitespace
+eol
+	= #quiet<
+		"\n"
+		/ "\r\n"
+		/ "\r"
+		/ "\u{2028}"
+		/ "\u{2029}"
+	> / #expected("newline")
+vwhite
+	= [\n\r\u{2028}\u{2029}]
+hwhite =
+	[ \t\u{00A0}\u{FEFF}\u{1680}\u{180E}\u{2000}-\u{200A}\u{202F}\u{205F}\u{3000}]
+
+// Comments
+comment_inline = #quiet<"//" (!vwhite .)*>
+comment_block = #quiet<"/*" (!"*/" .)* "*/">
+comment = comment_inline / comment_block / #expected("comment")
+
+// Blank spaces
+_ = #quiet<(vwhite / hwhite / comment)*>
+__ = #quiet<(vwhite / hwhite / comment)+> / #expected("whitespace")
+__h = #quiet<hwhite+> / #expected("unbroken space")
+_c = #quiet<(hwhite / comment / ("\\" __))*>
+
+// Keywords
+keyword
+	= "if"
+	/ "else"
+	/ "loop"
+
+// Tokens
+ident -> Sy = #quiet<sym<[a-zA-Z_][a-zA-Z0-9_]*>> / #expected("identifier")
+
+var -> Sn<Sy> = (!keyword / #expected("not keyword")) sn<ident>
+label -> Sn<Sy> = sn<"$" l:ident {l}>
+typath -> Ty 
+	= a:("::" _ {()})? p:sn<ident> ++ (_c "::" _)
+		{ Ty::Path { 
+			path: p,
+			abs: a.is_some(),
+		} }
+pattern -> Pattern
+	= p:label { Pattern::Lot {
+		label: Some(p),
+		ty: None,
+	} }
+	/ t:sn<typath> { Pattern::Lot {
+		label: None,
+		ty: Some(t),
+	} }
+lifetime -> Sy = "'" n:ident __h {n} / #expected("lifetime")
+
+// Numbers
+digit = [0-9]
+num
+	= #quiet<
+		"-"?
+		(digit+ ("." digit*)? / digit* "." digit+)
+		("e" "-"? digit+)?>
+	/ #expected("number")
+u16_val -> u16 = n:$(digit+) { froms(n) }
+num_ty -> NumTy
+	= "i" n:u16_val { NumTy::Signed(n) }
+	/ "u" n:u16_val { NumTy::Unsigned(n) }
+	/ "f" n:u16_val { NumTy::Float(n) }
+num_xr -> Sxr = sn<v:sym<num> t:num_ty? { Expr::Num { 
+	value: v,
+	ty: t,
+}}>
+
+// Epxressions
+var_xr -> Sxr = v:var { v.map(|s| Expr::Ident(s)) }
+sym_xr -> Sxr = num_xr / var_xr
+paren_xr -> Sxr = "(" _ x:expr _ ")" {x} / block_xr / sym_xr
+basic_unop = "!" / "*" / "-"
+borrow -> (Option<Sy>, bool)
+	= "&" l:lifetime? m:("mut" {true} / {false}) {(l, m)}
+unary_xr -> Sxr
+	= m:mark o:$(basic_unop) _ x:unary_xr
+		{ unop(m, match o {
+			"!" => UnaryOp::Not,
+			"*" => UnaryOp::Star,
+			"-" => UnaryOp::Neg,
+			other => panic!("Undefined unary op: \"{}\"", other)
+		}, x) }
+	/ b:sn<borrow> x:unary_xr
+		{ unop(b.span, UnaryOp::Ref {
+			lifetime: b.node.0,
+			mutable: b.node.1,
+		}, x) }
+	/ paren_xr
+
+arith_xr -> Sxr = #infix<unary_xr> {
+	#L x (_c "==" _) y { binop(x, BinaryOp::Eq, y) }
+	   x (_c "!=" _) y { binop(x, BinaryOp::Neq, y) }
+	   x (_c "<" _) y { binop(x, BinaryOp::Less, y) }
+	   x (_c ">" _) y { binop(x, BinaryOp::Greater, y) }
+	   x (_c "<=" _) y { binop(x, BinaryOp::Leq, y) }
+	   x (_c ">=" _) y { binop(x, BinaryOp::Geq, y) }
+	#L x (_c "|" _) y { binop(x, BinaryOp::BOr, y) }
+	#L x (_c "^" _) y { binop(x, BinaryOp::BXor, y) }
+	#L x (_c "&" _) y { binop(x, BinaryOp::BAnd, y) }
+	#L x (_c "<<" _) y { binop(x, BinaryOp::BLeft, y) }
+	   x (_c ">>" _) y { binop(x, BinaryOp::BRight, y) }
+	#L x (_c "+" _) y { binop(x, BinaryOp::Add, y) }
+	   x (_c "-" _) y { binop(x, BinaryOp::Sub, y) }
+	#L x (_c "*" _) y { binop(x, BinaryOp::Mul, y) }
+	   x (_c "/" _) y { binop(x, BinaryOp::Div, y) }
+} / unary_xr
+
+tail_guard -> Sn<Pattern>
+	= _c "~" _ p:sn<pattern> {p}
+guard_xr -> Sxr
+	= sn<m:sn<"if"> _ x:box<arith_xr> { Expr::Guard {
+		val: x,
+		pat: m.on(Pattern::True) } }>
+	/ x:arith_xr t:tail_guard* {
+		let mut left = x;
+		for p in t {
+			let span = left.span.union(p.span);
+			left = span.on(Expr::Guard {
+				val: Box::new(left),
+				pat: p
+			});
+		}
+		left
+	}
+
+flow_xr -> Sxr = #infix<guard_xr> {
+	#R x (_ "else" _) y { binop(x, BinaryOp::Else, y) }
+	#R x (_ "do" _) y { binop(x, BinaryOp::Then, y) }
+} / guard_xr
+
+assign_xr -> Sxr
+	= r:flow_xr l:(_c "=" _ l:flow_xr {l})? { match l {
+		None => r,
+		Some(l) => binop(r, BinaryOp::Assign, l),
+	} }
+
+pub expr -> Sxr = assign_xr
+
+block -> Vec<Sxr> = "{" c:code "}" {c}
+block_xr -> Sxr = sn<b:block {
+	if b.is_empty() { Expr::Unit } 
+	else { Expr::Block(b) } 
+}>
+
+pub code -> Vec<Sxr> = _ b:expr ** (_c eol _) _ {b}
