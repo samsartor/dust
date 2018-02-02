@@ -2,6 +2,7 @@ pub use span::{Symbol as Sy, Spanned as Sn};
 use span::Span;
 use std::str::FromStr;
 use std::fmt::Debug;
+use std::boxed::FnBox;
 
 pub type Ps<T> = Box<Sn<T>>;
 
@@ -43,6 +44,7 @@ pub enum BinaryOp {
     Assign,
     Then,
     Else,
+    Index,
 }
 
 #[derive(Debug)]
@@ -90,7 +92,11 @@ pub enum Expr {
     },
     Member {
         on: Psxr,
-        name: Sn<Sy>,
+        names: Vec<Sn<Sy>>,
+    },
+    Call {
+        on: Psxr,
+        args: Vec<Sxr>,
     },
     Binop {
         left: Psxr,
@@ -104,8 +110,32 @@ pub enum Expr {
     Block(Vec<Sxr>),
     Unit,
 }
+
+impl Expr {
+    pub fn set_left(&mut self, to: Psxr) {
+        use self::Expr::*;
+        match *self {
+            Guard { ref mut val, .. } => *val = to,
+            Member { ref mut on, .. } => *on = to,
+            Call { ref mut on, .. } => *on = to,
+            Binop { ref mut left, .. } => *left = to,
+            Unop { ref mut right, .. } => *right = to,
+            _ => (),
+        }
+    }
+}
+
+pub type Xr = Expr;
 pub type Sxr = Sn<Expr>;
 pub type Psxr = Ps<Expr>;
+
+pub type Rhs = Box<FnBox(Sxr) -> Xr>;
+macro_rules! rhs {
+    ($x:ident => $f:expr) => {{
+        let v: Rhs = Box::new(|$x| $f);
+        v
+    }};
+}
 
 // Builds a binary operation
 pub fn binop(l: Sxr, op: BinaryOp, r: Sxr) -> Sxr {

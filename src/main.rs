@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(never_type)]
+#![feature(fnbox)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -9,6 +10,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::env;
 
+#[macro_use]
 pub mod syntax;
 pub mod span;
 pub mod parse {

@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::sync::Mutex;
 use std::fmt::{Display, Debug, Formatter, Error as FmtError};
 use std::path::{Path, PathBuf};
+use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
 pub struct Interner<V: Clone + Hash + Eq> {
@@ -160,7 +161,16 @@ impl<T: Debug> Debug for Spanned<T> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
         self.node.fmt(f)
     }
-} 
+}
+
+impl<T> Deref for Spanned<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.node }
+}
+
+impl<T> DerefMut for Spanned<T> {
+    fn deref_mut(&mut self) -> &mut T { &mut self.node }
+}
 
 impl<T> Spanned<T> {
     pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {

@@ -9,6 +9,7 @@ sn<node> = a:#position val:node b:#position {
 }
 sym<node> = val:$(node) { Sy::new(val) }
 box<node> = val:node { Box::new(val) }
+ps<node> = box<sn<node>>
 mark -> Span = s:sn<""> { s.span }
 
 // Whitespace
@@ -41,20 +42,21 @@ keyword
 	= "if"
 	/ "else"
 	/ "loop"
+	/ "for"
+	/ "while"
 
 // Tokens
-ident -> Sy = #quiet<sym<[a-zA-Z_][a-zA-Z0-9_]*>> / #expected("identifier")
-
-var -> Sn<Sy> = (!keyword / #expected("not keyword")) sn<ident>
-label -> Sn<Sy> = sn<"$" l:ident {l}>
+token -> Sy = #quiet<sym<[a-zA-Z_][a-zA-Z0-9_]*>> / #expected("identifier")
+ident -> Sy = (!keyword / #expected("not keyword")) t:token {t}
+label -> Sy = "$" l:ident {l}
 typath -> Ty 
-	= a:("::" _ {()})? p:sn<ident> ++ (_c "::" _)
+	= (b:borrow _c {b})* a:("::" _ {()})? p:sn<ident> ++ (_c "::" _)
 		{ Ty::Path { 
 			path: p,
 			abs: a.is_some(),
 		} }
 pattern -> Pattern
-	= p:label { Pattern::Lot {
+	= p:sn<label> { Pattern::Lot {
 		label: Some(p),
 		ty: None,
 	} }
@@ -83,9 +85,23 @@ num_xr -> Sxr = sn<v:sym<num> t:num_ty? { Expr::Num {
 }}>
 
 // Epxressions
-var_xr -> Sxr = v:var { v.map(|s| Expr::Ident(s)) }
+var_xr -> Sxr = v:sn<ident> { v.map(|s| Expr::Ident(s)) }
 sym_xr -> Sxr = num_xr / var_xr
 paren_xr -> Sxr = "(" _ x:expr _ ")" {x} / block_xr / sym_xr
+
+val_tail -> Rhs
+	= _c "(" _ a:expr ** (_ "," _) _ ("," _)? ")"
+		{ rhs!(x => Expr::Call { on: Box::new(x), args: a }) }
+	/ m:(_c "." _ i:sn<ident> {i})+
+		{ rhs!(x => Expr::Member { on: Box::new(x), names: m }) }
+val_xr -> Sxr
+	= v:paren_xr t:sn<val_tail>*
+		{
+			let mut out = v;
+			for t in t { out = t.span.on((t.node)(out)); }
+			out
+		}
+
 basic_unop = "!" / "*" / "-"
 borrow -> (Option<Sy>, bool)
 	= "&" l:lifetime? m:("mut" {true} / {false}) {(l, m)}
@@ -97,12 +113,12 @@ unary_xr -> Sxr
 			"-" => UnaryOp::Neg,
 			other => panic!("Undefined unary op: \"{}\"", other)
 		}, x) }
-	/ b:sn<borrow> x:unary_xr
+	/ b:sn<borrow> _c x:unary_xr
 		{ unop(b.span, UnaryOp::Ref {
 			lifetime: b.node.0,
 			mutable: b.node.1,
 		}, x) }
-	/ paren_xr
+	/ val_xr
 
 arith_xr -> Sxr = #infix<unary_xr> {
 	#L x (_c "==" _) y { binop(x, BinaryOp::Eq, y) }
